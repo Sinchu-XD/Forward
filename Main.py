@@ -111,29 +111,20 @@ async def set_chat(_, message: Message):
         await message.reply_text(f"❌ Error: {e}")
 
 
-@bot.on_message(filters.text)
-async def forward_messages(_, message: Message):
-    user_id = message.from_user.id
-    if user_id not in user_clients:
-        return  # User is not logged in, ignore the message
-
-    # Check if chat pairs are set
-    if not chat_pairs:
-        return  # No chat pairs set, nothing to do
-
-    # Get the client for the user
-    client = user_clients[user_id]
-
-    # Check if the source chat exists in chat pairs
-    if message.chat.id in chat_pairs:
-        target_id = chat_pairs[message.chat.id]  # Get the target chat from chat_pairs
-        
+@app.on_message(filters.all & ~filters.private)
+async def forward_messages(client, message: Message):
+    source_id = message.chat.id
+    if source_id in chat_pairs:
+        target_id = chat_pairs[source_id]
         try:
-            # Forward the message to the target chat
-            await client.forward_messages(target_id, message.chat.id, message.message_id)
-            print(f"✅ Message forwarded from {message.chat.id} to {target_id}.")
+            await client.copy_message(
+                chat_id=target_id,
+                from_chat_id=source_id,
+                message_id=message.message_id  # Fix here, use message.message_id
+            )
         except Exception as e:
-            print(f"❌ Error forwarding message: {e}")
+            print(f"❌ Error copying message: {e}")
+
 
 
 async def main():
