@@ -130,7 +130,7 @@ async def forward_messages(_, message: Message):
         
         try:
             # Forward the message to the target chat
-            await client.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
+            await client.forward_messages(target_id, message.chat.id, message.message_id)
             print(f"✅ Message forwarded from {message.chat.id} to {target_id}.")
         except Exception as e:
             print(f"❌ Error forwarding message: {e}")
