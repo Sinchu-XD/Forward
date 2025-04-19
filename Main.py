@@ -129,7 +129,12 @@ async def forward_message(_, message: Message):
 async def main():
     await bot.start()
     print("🤖 Bot is running.")
-    await asyncio.Event().wait()
+    await asyncio.get_event_loop().create_future()
 
+# Start the bot
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("Bot stopped manually.")
