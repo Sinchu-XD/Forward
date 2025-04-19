@@ -128,16 +128,20 @@ async def send_message(_, message: Message):
     for source_id, target_id in chat_pairs.items():
         try:
             # Fetch the most recent message from the source chat
-            recent_messages = await client.get_chat_history(source_id, limit=1)
-            if recent_messages:
-                recent_message = recent_messages[0]
+            recent_messages = client.get_chat_history(source_id, limit=1)
+
+            # As get_chat_history returns an async generator, we need to iterate over it
+            async for recent_message in recent_messages:
                 # Forward the message to the target chat
                 await client.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=recent_message.message_id)
                 await message.reply_text(f"✅ Message forwarded from chat {source_id} to {target_id}.")
+                break  # We only want to forward the latest message, so break after the first iteration
             else:
+                # If no recent message was found
                 await message.reply_text(f"❌ No messages found in source chat {source_id}.")
         except Exception as e:
             await message.reply_text(f"❌ Error forwarding message: {e}")
+
 
 
 async def main():
