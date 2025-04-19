@@ -100,6 +100,7 @@ async def login_flow(_, message: Message):
         except Exception as e:
             await message.reply_text(f"❌ 2FA Error: {e}")
 
+
 @bot.on_message(filters.command("setchat"))
 async def set_chat(_, message: Message):
     try:
@@ -110,43 +111,29 @@ async def set_chat(_, message: Message):
         await message.reply_text(f"❌ Error: {e}")
 
 
-@bot.on_message(filters.command("send"))
-async def send_message(_, message: Message):
+@bot.on_message(filters.text)
+async def forward_messages(_, message: Message):
     user_id = message.from_user.id
     if user_id not in user_clients:
-        await message.reply_text("❌ You're not logged in. Use /login first.")
-        return
+        return  # User is not logged in, ignore the message
 
     # Check if chat pairs are set
     if not chat_pairs:
-        await message.reply_text("❌ No chat pairs set. Use /setchat <source> <target> first.")
-        return
+        return  # No chat pairs set, nothing to do
 
+    # Get the client for the user
     client = user_clients[user_id]
-    
-    # Forward messages from source chat to target chat automatically
-    for source_id, target_id in chat_pairs.items():
+
+    # Check if the source chat exists in chat pairs
+    if message.chat.id in chat_pairs:
+        target_id = chat_pairs[message.chat.id]  # Get the target chat from chat_pairs
+        
         try:
-            # Fetch the most recent message from the source chat
-            recent_messages = client.get_chat_history(source_id, limit=1)
-
-            # As get_chat_history returns an async generator, we need to iterate over it
-            async for recent_message in recent_messages:
-                # Ensure that the message has message_id and is not a service message
-                if hasattr(recent_message, 'message_id') and recent_message.message_id:
-                    # Forward the message to the target chat
-                    await client.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=recent_message.message_id)
-                    await message.reply_text(f"✅ Message forwarded from chat {source_id} to {target_id}.")
-                    break  # We only want to forward the latest message, so break after the first iteration
-                else:
-                    await message.reply_text(f"❌ No valid message found in source chat {source_id}.")
-                    break  # Stop iterating if no valid message was found
-            else:
-                # If no recent message was found
-                await message.reply_text(f"❌ No messages found in source chat {source_id}.")
+            # Forward the message to the target chat
+            await client.copy_message(chat_id=target_id, from_chat_id=message.chat.id, message_id=message.message_id)
+            print(f"✅ Message forwarded from {message.chat.id} to {target_id}.")
         except Exception as e:
-            await message.reply_text(f"❌ Error forwarding message: {e}")
-
+            print(f"❌ Error forwarding message: {e}")
 
 
 async def main():
