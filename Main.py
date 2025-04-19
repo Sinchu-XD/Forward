@@ -4,139 +4,121 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.errors import SessionPasswordNeeded
 
-API_ID = 25024171
-API_HASH = "7e709c0f5a2b8ed7d5f90a48219cffd3"
-BOT_TOKEN = "7812831912:AAHh1Wiwhpkxpy4_Y_YkNDHkA1zsm3dQYx8"
+API_ID = 12345678  # Replace with your own
+API_HASH = "your_api_hash_here"
+BOT_TOKEN = "your_bot_token_here"
 
-# Ensure sessions folder exists
 os.makedirs("sessions", exist_ok=True)
 
-bot = Client("ghibli_forward_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("ForwarderBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-login_sessions = {}  # Temporary OTP/2FA data
-user_clients = {}    # Active logged-in user Clients
-chat_pairs = {}      # Source → Target chat mappings
+login_sessions = {}   # Temp OTP/2FA store
+user_clients = {}     # Logged-in users
+chat_pairs = {}       # Source: Target mapping
 
 
 @bot.on_message(filters.command("start"))
 async def start(_, message: Message):
-    await message.reply_text("👋 Send /login <your_phone_number> to login with your Telegram account.")
+    await message.reply("Send /login <your_phone_number> to log in.\n\nThen use /setchat <source_chat_id> <target_chat_id>")
 
 
 @bot.on_message(filters.command("login"))
-async def handle_login(_, message: Message):
+async def login_cmd(_, message: Message):
     user_id = message.from_user.id
     args = message.text.split(maxsplit=1)
-
     if len(args) != 2:
-        await message.reply_text("📱 Please use `/login <your_phone_number>`\n\nExample: `/login +919876543210`", quote=True)
-        return
-
-    phone = args[1].strip()
+        return await message.reply("Usage: /login <your_phone_number>")
+    
+    phone = args[1]
     session_name = f"sessions/{user_id}"
-
-    if os.path.exists(session_name + ".session"):
-        user_clients[user_id] = Client(session_name, api_id=API_ID, api_hash=API_HASH)
-        await user_clients[user_id].start()
-        await message.reply_text("✅ You're already logged in.")
-        return
+    client = Client(session_name, api_id=API_ID, api_hash=API_HASH)
+    await client.connect()
 
     try:
-        user_clients[user_id] = Client(session_name, api_id=API_ID, api_hash=API_HASH)
-        await user_clients[user_id].connect()
-        sent_code = await user_clients[user_id].send_code(phone)
-
+        sent = await client.send_code(phone)
         login_sessions[user_id] = {
-            "client": user_clients[user_id],
+            "client": client,
             "phone": phone,
-            "hash": sent_code.phone_code_hash,
+            "hash": sent.phone_code_hash,
             "step": "otp"
         }
-        await message.reply_text("📨 Enter the OTP you received:")
+        await message.reply("📨 Enter the OTP you received:")
     except Exception as e:
-        await message.reply_text(f"❌ Error: {e}")
+        await message.reply(f"❌ Error: {e}")
 
 
-@bot.on_message(filters.text & ~filters.command(["start", "login", "setchat"]))
-async def login_flow(_, message: Message):
-    # Ensure that the message is from a user
+@bot.on_message(filters.text & ~filters.command(["login", "start", "setchat"]))
+async def otp_or_2fa(_, message: Message):
     if not message.from_user:
-        return  # Do nothing if the message is not from a user
-    
+        return
     user_id = message.from_user.id
     session = login_sessions.get(user_id)
-
     if not session:
         return
 
-    step = session["step"]
     client = session["client"]
 
-    if step == "otp":
+    if session["step"] == "otp":
         try:
-            # Attempt to sign in using the OTP
-            await client.sign_in(
-                phone_number=session["phone"],
-                phone_code_hash=session["hash"],
-                phone_code=message.text.strip()
-            )
+            await client.sign_in(session["phone"], session["hash"], message.text.strip())
+            user_clients[user_id] = client
             del login_sessions[user_id]
-            await message.reply_text("✅ Logged in successfully!")
+            await message.reply("✅ Logged in successfully!")
+            await client.start()
         except SessionPasswordNeeded:
             session["step"] = "2fa"
-            await message.reply_text("🔐 2FA enabled. Enter your password:")
+            await message.reply("🔐 Enter your 2FA password:")
         except Exception as e:
-            # Handle expired OTP and prompt the user to resend the OTP
-            if "PHONE_CODE_EXPIRED" in str(e):
-                await message.reply_text("❌ The OTP you entered has expired. Please request a new one by sending `/login <your_phone_number>` again.")
-            else:
-                await message.reply_text(f"❌ OTP Error: {e}")
-
-    elif step == "2fa":
+            await message.reply(f"❌ OTP Error: {e}")
+    
+    elif session["step"] == "2fa":
         try:
             await client.check_password(message.text.strip())
+            user_clients[user_id] = client
             del login_sessions[user_id]
-            await message.reply_text("✅ Logged in with 2FA!")
+            await message.reply("✅ Logged in with 2FA!")
+            await client.start()
         except Exception as e:
-            await message.reply_text(f"❌ 2FA Error: {e}")
+            await message.reply(f"❌ 2FA Error: {e}")
 
 
 @bot.on_message(filters.command("setchat"))
-async def set_chat(_, message: Message):
+async def setchat(_, message: Message):
     try:
         _, source_id, target_id = message.text.split()
         chat_pairs[int(source_id)] = int(target_id)
-        await message.reply_text(f"✅ Forwarding set: {source_id} → {target_id}")
+        await message.reply(f"✅ Now forwarding from `{source_id}` ➜ `{target_id}`")
     except Exception as e:
-        await message.reply_text(f"❌ Error: {e}")
+        await message.reply(f"❌ Error: {e}")
 
 
+# ✅ FORWARDING FUNCTION FOR ALL FUTURE MESSAGES
 @bot.on_message(filters.all & ~filters.private)
-async def forward_messages(client, message: Message):
+async def forward_incoming(bot, message: Message):
     source_id = message.chat.id
-    if source_id in chat_pairs:
-        target_id = chat_pairs[source_id]
-        try:
-            await client.copy_message(
-                chat_id=target_id,
-                from_chat_id=source_id,
-                message_id=message.message_id  # Fix here, use message.message_id
-            )
-        except Exception as e:
-            print(f"❌ Error copying message: {e}")
-
+    for user_id, client in user_clients.items():
+        if source_id in chat_pairs:
+            try:
+                target_id = chat_pairs[source_id]
+                await client.copy_message(
+                    chat_id=target_id,
+                    from_chat_id=source_id,
+                    message_id=message.id
+                )
+                print(f"📤 Forwarded message from {source_id} to {target_id}")
+            except Exception as e:
+                print(f"❌ Failed to forward: {e}")
 
 
 async def main():
     await bot.start()
-    print("🤖 Bot is running.")
+    print("🤖 Bot running...")
     await asyncio.get_event_loop().create_future()
 
-# Start the bot
+
 if __name__ == "__main__":
     try:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
-        print("Bot stopped manually.")
+        print("👋 Bot stopped.")
         
