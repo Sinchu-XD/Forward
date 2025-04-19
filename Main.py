@@ -94,29 +94,34 @@ async def login_flow(_, message: Message):
 
 @bot.on_message(filters.command("setchat"))
 async def set_chat(_, message: Message):
+    user_id = message.from_user.id
+    args = message.text.split()
+
+    if len(args) != 3:
+        return await message.reply_text("❌ Use: /setchat <source_chat_id> <target_chat_id>")
+
+    source_id = int(args[1])
+    target_id = int(args[2])
+
+    if user_id not in user_clients:
+        return await message.reply_text("❌ Please login first using /login")
+
+    client = user_clients[user_id]
+
+@client.on_message(filters.chat(source_id))
+async def on_source_message(_, msg: Message):
     try:
-        _, source_id, target_id = message.text.split()
-        chat_pairs[int(source_id)] = int(target_id)
-        await message.reply_text(f"✅ Forwarding set: {source_id} → {target_id}")
+        await bot.copy_message(
+            chat_id=target_id,
+            from_chat_id=msg.chat.id,
+            message_id=msg.id
+            )
+        print(f"✅ Copied from {msg.chat.id} to {target_id}")
     except Exception as e:
-        await message.reply_text(f"❌ Error: {e}")
+        print(f"❌ Copy error: {e}")
 
+    await message.reply_text(f"✅ Copying all messages from `{source_id}` to `{target_id}` using your user session.")
 
-@bot.on_message(filters.all & ~filters.private)
-async def forward_messages(_, message: Message):
-    source_id = message.chat.id
-    for user_id, client in user_clients.items():
-        if source_id in chat_pairs:
-            target_id = chat_pairs[source_id]
-            try:
-                await client.copy_message(
-                    chat_id=target_id,
-                    from_chat_id=source_id,
-                    message_id=message.id
-                )
-                print(f"📤 Forwarded from {source_id} to {target_id}")
-            except Exception as e:
-                print(f"❌ Forward error: {e}")
 
 
 
