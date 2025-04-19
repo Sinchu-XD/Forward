@@ -111,7 +111,7 @@ async def set_chat(_, message: Message):
         await message.reply_text(f"❌ Error: {e}")
 
 
-@app.on_message(filters.all & ~filters.private)
+@bot.on_message(filters.all & ~filters.private)
 async def forward_messages(client, message: Message):
     source_id = message.chat.id
     if source_id in chat_pairs:
