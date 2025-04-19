@@ -26,16 +26,22 @@ async def start(_, message: Message):
 @bot.on_message(filters.command("login"))
 async def handle_login(_, message: Message):
     user_id = message.from_user.id
+    args = message.text.split(maxsplit=1)
+
+    if len(args) != 2:
+        await message.reply_text("📱 Please use `/login <your_phone_number>`\n\nExample: `/login +919876543210`", quote=True)
+        return
+
+    phone = args[1].strip()
+    session_name = f"sessions/{user_id}"
+
+    if os.path.exists(session_name + ".session"):
+        user_clients[user_id] = Client(session_name, api_id=API_ID, api_hash=API_HASH)
+        await user_clients[user_id].start()
+        await message.reply_text("✅ You're already logged in.")
+        return
+
     try:
-        phone = message.text.split(maxsplit=1)[1]
-        session_name = f"sessions/{user_id}"
-
-        if os.path.exists(session_name + ".session"):
-            user_clients[user_id] = Client(session_name, api_id=API_ID, api_hash=API_HASH)
-            await user_clients[user_id].start()
-            await message.reply_text("✅ You're already logged in.")
-            return
-
         user_clients[user_id] = Client(session_name, api_id=API_ID, api_hash=API_HASH)
         await user_clients[user_id].connect()
         sent_code = await user_clients[user_id].send_code(phone)
@@ -47,7 +53,6 @@ async def handle_login(_, message: Message):
             "step": "otp"
         }
         await message.reply_text("📨 Enter the OTP you received:")
-
     except Exception as e:
         await message.reply_text(f"❌ Error: {e}")
 
