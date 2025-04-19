@@ -92,6 +92,8 @@ async def login_flow(_, message: Message):
             await message.reply_text(f"❌ 2FA Error: {e}")
 
 
+from pyrogram import handlers
+
 @bot.on_message(filters.command("setchat"))
 async def set_chat(_, message: Message):
     user_id = message.from_user.id
@@ -106,21 +108,26 @@ async def set_chat(_, message: Message):
     if user_id not in user_clients:
         return await message.reply_text("❌ Please login first using /login")
 
-    client = user_clients[user_id]
+    user_client = user_clients[user_id]
 
-@client.on_message(filters.chat(source_id))
-async def on_source_message(_, msg: Message):
-    try:
-        await bot.copy_message(
-            chat_id=target_id,
-            from_chat_id=msg.chat.id,
-            message_id=msg.id
+    async def on_source_message(_, msg: Message):
+        try:
+            await bot.copy_message(
+                chat_id=target_id,
+                from_chat_id=msg.chat.id,
+                message_id=msg.id
             )
-        print(f"✅ Copied from {msg.chat.id} to {target_id}")
-    except Exception as e:
-        print(f"❌ Copy error: {e}")
+            print(f"✅ Copied from {msg.chat.id} to {target_id}")
+        except Exception as e:
+            print(f"❌ Copy error: {e}")
 
-    await message.reply_text(f"✅ Copying all messages from `{source_id}` to `{target_id}` using your user session.")
+    # Create handler
+    handler = handlers.MessageHandler(on_source_message, filters.chat(source_id))
+
+    # Add to user's client
+    user_client.add_handler(handler)
+
+    await message.reply_text(f"✅ All messages from `{source_id}` will be copied to `{target_id}`.")
 
 
 
