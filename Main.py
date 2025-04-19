@@ -74,6 +74,7 @@ async def login_flow(_, message: Message):
 
     if step == "otp":
         try:
+            # Attempt to sign in using the OTP
             await client.sign_in(
                 phone_number=session["phone"],
                 phone_code_hash=session["hash"],
@@ -85,7 +86,11 @@ async def login_flow(_, message: Message):
             session["step"] = "2fa"
             await message.reply_text("🔐 2FA enabled. Enter your password:")
         except Exception as e:
-            await message.reply_text(f"❌ OTP Error: {e}")
+            # Handle expired OTP and prompt the user to resend the OTP
+            if "PHONE_CODE_EXPIRED" in str(e):
+                await message.reply_text("❌ The OTP you entered has expired. Please request a new one by sending `/login <your_phone_number>` again.")
+            else:
+                await message.reply_text(f"❌ OTP Error: {e}")
 
     elif step == "2fa":
         try:
@@ -94,7 +99,6 @@ async def login_flow(_, message: Message):
             await message.reply_text("✅ Logged in with 2FA!")
         except Exception as e:
             await message.reply_text(f"❌ 2FA Error: {e}")
-
 
 @bot.on_message(filters.command("setchat"))
 async def set_chat(_, message: Message):
