@@ -103,35 +103,33 @@ async def set_chat(_, message: Message):
 
 
 @bot.on_message(filters.command("send"))
-async def automatic_forward(_, message: Message):
-    if not message.from_user:
-        return
-
+async def send_message(_, message: Message):
     user_id = message.from_user.id
-
     if user_id not in user_clients:
         await message.reply_text("❌ You're not logged in. Use /login first.")
         return
 
-    # Checking if source chat pair exists for the user
-    target_id = chat_pairs.get(message.chat.id)
-
-    if not target_id:
-        await message.reply_text("❌ No target chat set. Use /setchat <source> <target>")
+    # Check if chat pairs are set
+    if not chat_pairs:
+        await message.reply_text("❌ No chat pairs set. Use /setchat <source> <target> first.")
         return
 
-    try:
-        # Fetching the most recent messages from the source chat and forwarding them
-        async for msg in bot.iter_chat_members(message.chat.id, limit=5):
-            if msg.text:  # Check if the message has text content
-                await user_clients[user_id].copy_message(
-                    chat_id=target_id,
-                    from_chat_id=message.chat.id,
-                    message_id=msg.message_id
-                )
-                await message.reply_text(f"✅ Forwarded message {msg.message_id} successfully.")
-    except Exception as e:
-        await message.reply_text(f"❌ Forward Error: {e}")
+    client = user_clients[user_id]
+    
+    # Forward messages from source chat to target chat automatically
+    for source_id, target_id in chat_pairs.items():
+        try:
+            # Fetch the most recent message from the source chat
+            recent_messages = await client.get_chat_history(source_id, limit=1)
+            if recent_messages:
+                recent_message = recent_messages[0]
+                # Forward the message to the target chat
+                await client.copy_message(chat_id=target_id, from_chat_id=source_id, message_id=recent_message.message_id)
+                await message.reply_text(f"✅ Message forwarded from chat {source_id} to {target_id}.")
+            else:
+                await message.reply_text(f"❌ No messages found in source chat {source_id}.")
+        except Exception as e:
+            await message.reply_text(f"❌ Error forwarding message: {e}")
 
 
 async def main():
