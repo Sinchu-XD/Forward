@@ -57,7 +57,7 @@ async def handle_login(_, message: Message):
         await message.reply_text(f"❌ Error: {e}")
 
 
-@bot.on_message(filters.text & ~filters.command(["start", "login", "setchat"]))
+@bot.on_message(filters.text & ~filters.command(["start", "login", "setchat", "send"]))
 async def login_flow(_, message: Message):
     # Ensure that the message is from a user
     if not message.from_user:
