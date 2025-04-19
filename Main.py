@@ -103,7 +103,7 @@ async def set_chat(_, message: Message):
 
 
 @bot.on_message(filters.command("send"))
-async def forward_replied_message(_, message: Message):
+async def automatic_forward(_, message: Message):
     if not message.from_user:
         return
 
@@ -113,26 +113,23 @@ async def forward_replied_message(_, message: Message):
         await message.reply_text("❌ You're not logged in. Use /login first.")
         return
 
-    if not message.reply_to_message:
-        await message.reply_text("⚠️ Reply to the message you want to forward with /send.")
-        return
-
-    replied_msg = message.reply_to_message
-    source_id = replied_msg.chat.id
-
-    target_id = chat_pairs.get(source_id)
+    # Checking if source chat pair exists for the user
+    target_id = chat_pairs.get(message.chat.id)
 
     if not target_id:
         await message.reply_text("❌ No target chat set. Use /setchat <source> <target>")
         return
 
     try:
-        await user_clients[user_id].copy_message(
-            chat_id=target_id,
-            from_chat_id=source_id,
-            message_id=replied_msg.message_id
-        )
-        await message.reply_text("✅ Message forwarded successfully.")
+        # Fetching the most recent messages from the source chat and forwarding them
+        async for msg in bot.iter_chat_members(message.chat.id, limit=5):
+            if msg.text:  # Check if the message has text content
+                await user_clients[user_id].copy_message(
+                    chat_id=target_id,
+                    from_chat_id=message.chat.id,
+                    message_id=msg.message_id
+                )
+                await message.reply_text(f"✅ Forwarded message {msg.message_id} successfully.")
     except Exception as e:
         await message.reply_text(f"❌ Forward Error: {e}")
 
