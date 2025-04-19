@@ -59,6 +59,10 @@ async def handle_login(_, message: Message):
 
 @bot.on_message(filters.text & ~filters.command(["start", "login", "setchat"]))
 async def login_flow(_, message: Message):
+    # Ensure that the message is from a user
+    if not message.from_user:
+        return  # Do nothing if the message is not from a user
+    
     user_id = message.from_user.id
     session = login_sessions.get(user_id)
 
