@@ -12,15 +12,14 @@ BOT_TOKEN = "7812831912:AAHh1Wiwhpkxpy4_Y_YkNDHkA1zsm3dQYx8"
 bot = Client("forward_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 login_sessions = {}
-user_clients = {}      # user_id -> Client
-chat_links = {}        # user_id -> [(source_id, target_id)]
-
+user_clients = {}
+chat_links = {}
 os.makedirs("sessions", exist_ok=True)
 
 @bot.on_message(filters.command("start"))
 async def start(_, message: Message):
     await message.reply_text(
-        "**👋 Welcome!**\n\nSend `/login <phone>` to log in with your Telegram user.\nThen `/setchat <source_id> <target_id>` to copy messages.\n\n✅ Bot not needed in source chat."
+        "**👋 Welcome!**\n\nSend `/login <phone>` to log in with your Telegram user.\nThen `/setchat <source_id> <target_id> [phone]` to copy messages.\n\n✅ Bot not needed in source chat."
     )
 
 @bot.on_message(filters.command("login"))
@@ -31,13 +30,14 @@ async def login(_, message: Message):
         return await message.reply("❌ Use: /login <phone_number>")
     
     phone = args[1]
-    session_str = f"sessions/{user_id}"
+    session_str = f"sessions/{user_id}_{phone}"
     client = Client(session_str, api_id=API_ID, api_hash=API_HASH)
 
     if os.path.exists(session_str + ".session"):
         await client.start()
-        user_clients[user_id] = client
-        chat_links[user_id] = []
+        if user_id not in user_clients:
+            user_clients[user_id] = []
+        user_clients[user_id].append(client)
         return await message.reply("✅ Already logged in.")
     
     try:
@@ -66,8 +66,9 @@ async def handle_steps(_, message: Message):
     if session["step"] == "otp":
         try:
             await client.sign_in(session["phone"], session["hash"], text)
-            user_clients[user_id] = client
-            chat_links[user_id] = []
+            if user_id not in user_clients:
+                user_clients[user_id] = []
+            user_clients[user_id].append(client)
             del login_sessions[user_id]
             await message.reply("✅ Logged in!")
         except SessionPasswordNeeded:
@@ -79,8 +80,9 @@ async def handle_steps(_, message: Message):
     elif session["step"] == "2fa":
         try:
             await client.check_password(text)
-            user_clients[user_id] = client
-            chat_links[user_id] = []
+            if user_id not in user_clients:
+                user_clients[user_id] = []
+            user_clients[user_id].append(client)
             del login_sessions[user_id]
             await message.reply("✅ Logged in with 2FA!")
         except Exception as e:
@@ -89,21 +91,31 @@ async def handle_steps(_, message: Message):
 @bot.on_message(filters.command("setchat"))
 async def set_chat(_, message: Message):
     user_id = message.from_user.id
-    if user_id not in user_clients:
+    if user_id not in user_clients or not user_clients[user_id]:
         return await message.reply("❌ You're not logged in.")
 
     args = message.text.split()
-    if len(args) != 3:
-        return await message.reply("❌ Usage: /setchat <source_chat_id> <target_chat_id>")
-    
+    if len(args) not in [3, 4]:
+        return await message.reply("❌ Usage: /setchat <source_chat_id> <target_chat_id> [phone]")
+
     try:
         source_id = int(args[1])
         target_id = int(args[2])
+        phone = args[3] if len(args) == 4 else None
     except:
         return await message.reply("❌ Chat IDs must be numbers.")
-    
-    user_client = user_clients[user_id]
-    chat_links[user_id].append((source_id, target_id))
+
+    clients = user_clients.get(user_id, [])
+    user_client = None
+    if phone:
+        for client in clients:
+            if phone in client.name:
+                user_client = client
+                break
+        if not user_client:
+            return await message.reply("❌ No session found for that phone number.")
+    else:
+        user_client = clients[0]
 
     async def forward_message(client, msg: Message):
         try:
@@ -116,10 +128,24 @@ async def set_chat(_, message: Message):
         except Exception as e:
             print(f"❌ Copy failed: {e}")
 
-    user_client.add_handler(MessageHandler(forward_message, filters.chat(source_id)))
-    await message.reply(f"✅ Set to copy from `{source_id}` → `{target_id}`")
+    if user_id not in chat_links:
+        chat_links[user_id] = []
+    chat_links[user_id].append((source_id, target_id))
 
-user_handlers = {}
+    user_client.add_handler(MessageHandler(forward_message, filters.chat(source_id)))
+    await message.reply(f"✅ Set to copy from `{source_id}` → `{target_id}` using your session.")
+
+@bot.on_message(filters.command("sessions"))
+async def list_sessions(_, message: Message):
+    user_id = message.from_user.id
+    sessions = user_clients.get(user_id, [])
+    if not sessions:
+        return await message.reply("⚠️ You have no active sessions.")
+    
+    text = "**📱 Active Sessions:**\n\n"
+    for i, c in enumerate(sessions, 1):
+        text += f"{i}. `{c.name.split('/')[-1]}`\n"
+    await message.reply(text)
 
 @bot.on_message(filters.command("list"))
 async def list_active(_, message: Message):
@@ -150,18 +176,17 @@ async def stop_forward(_, message: Message):
     if user_id not in chat_links or not chat_links[user_id]:
         return await message.reply("❌ You have no active forwards.")
 
-    # Remove links and handlers
     remaining_links = []
     removed = False
-    if user_id in user_handlers:
-        for (src, tgt), handler in user_handlers[user_id][:]:
+    if user_id in chat_links:
+        for (src, tgt) in chat_links[user_id]:
             if src == source_id:
                 try:
-                    user_clients[user_id].remove_handler(*handler)
+                    for client in user_clients[user_id]:
+                        client.remove_handler(MessageHandler)
                     removed = True
-                    user_handlers[user_id].remove(((src, tgt), handler))
-                except:
-                    pass
+                except Exception as e:
+                    print(f"❌ Error removing handler: {e}")
             else:
                 remaining_links.append((src, tgt))
     chat_links[user_id] = remaining_links
@@ -171,23 +196,14 @@ async def stop_forward(_, message: Message):
     else:
         await message.reply("⚠️ No active handler found for that source.")
 
-# Modify this part inside your setchat handler after adding new handler:
-    if user_id not in user_handlers:
-        user_handlers[user_id] = []
-
-    handler = MessageHandler(forward_message, filters.chat(source_id))
-    user_client.add_handler(handler)
-    user_handlers[user_id].append(((source_id, target_id), handler))
-
 async def main():
     await bot.start()
     print("🤖 Bot started.")
 
-    # Start user sessions
-    for user_id, client in user_clients.items():
-        await client.start()
+    for user_id, clients in user_clients.items():
+        for client in clients:
+            await client.start()
 
-    # Keep bot alive
     await asyncio.get_event_loop().create_future()
 
 if __name__ == "__main__":
