@@ -8,105 +8,100 @@ API_ID = 25024171
 API_HASH = "7e709c0f5a2b8ed7d5f90a48219cffd3"
 BOT_TOKEN = "7812831912:AAHh1Wiwhpkxpy4_Y_YkNDHkA1zsm3dQYx8"
 
-
+# Ensure sessions folder exists
 os.makedirs("sessions", exist_ok=True)
 
-bot = Client("ForwarderBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("ghibli_forward_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-login_sessions = {}   # Temp store for OTP/2FA flow
-user_clients = {}     # user_id: pyrogram.Client
-chat_pairs = {}       # source_id: target_id
+login_sessions = {}  # Temporary OTP/2FA data
+user_clients = {}    # Active logged-in user Clients
+chat_pairs = {}      # Source → Target chat mappings
 
 
 @bot.on_message(filters.command("start"))
 async def start(_, message: Message):
-    await message.reply("Send `/login <your_phone>` to log in (if not already).\nThen use `/setchat <source_chat_id> <target_chat_id>`.")
+    await message.reply_text("👋 Send /login <your_phone_number> to login with your Telegram account.")
 
 
 @bot.on_message(filters.command("login"))
-async def login_cmd(_, message: Message):
+async def handle_login(_, message: Message):
     user_id = message.from_user.id
     args = message.text.split(maxsplit=1)
-    if len(args) != 2:
-        return await message.reply("Usage: /login <your_phone_number>")
 
-    phone = args[1]
+    if len(args) != 2:
+        await message.reply_text("📱 Please use `/login <your_phone_number>`\n\nExample: `/login +919876543210`", quote=True)
+        return
+
+    phone = args[1].strip()
     session_name = f"sessions/{user_id}"
 
-    # ✅ Check if already logged in
-    if os.path.exists(f"{session_name}.session"):
-        client = Client(session_name, api_id=API_ID, api_hash=API_HASH)
-        await client.connect()
-        try:
-            await client.get_me()
-            await client.start()
-            user_clients[user_id] = client
-            return await message.reply("✅ You are already logged in!")
-        except Exception as e:
-            await message.reply(f"⚠️ Error loading saved session: {e}")
-            return
+    if os.path.exists(session_name + ".session"):
+        user_clients[user_id] = Client(session_name, api_id=API_ID, api_hash=API_HASH)
+        await user_clients[user_id].start()
+        await message.reply_text("✅ You're already logged in.")
+        return
 
-    # Proceed with fresh login if session doesn't exist
-    client = Client(session_name, api_id=API_ID, api_hash=API_HASH)
-    await client.connect()
     try:
-        sent = await client.send_code(phone)
+        user_clients[user_id] = Client(session_name, api_id=API_ID, api_hash=API_HASH)
+        await user_clients[user_id].connect()
+        sent_code = await user_clients[user_id].send_code(phone)
+
         login_sessions[user_id] = {
-            "client": client,
+            "client": user_clients[user_id],
             "phone": phone,
-            "hash": sent.phone_code_hash,
+            "hash": sent_code.phone_code_hash,
             "step": "otp"
         }
-        await message.reply("📨 OTP sent. Please reply with the code.")
+        await message.reply_text("📨 Enter the OTP you received:")
     except Exception as e:
-        await message.reply(f"❌ Failed to send code: {e}")
+        await message.reply_text(f"❌ Error: {e}")
 
 
-@bot.on_message(filters.text & ~filters.command(["login", "start", "setchat"]))
-async def otp_or_2fa(_, message: Message):
+@bot.on_message(filters.text & ~filters.command(["start", "login", "setchat"]))
+async def login_flow(_, message: Message):
     user_id = message.from_user.id
     session = login_sessions.get(user_id)
+
     if not session:
         return
 
+    step = session["step"]
     client = session["client"]
-    code = message.text.strip()
 
-    if session["step"] == "otp":
+    if step == "otp":
         try:
-            await client.sign_in(session["phone"], session["hash"], code)
-            await client.start()
-            user_clients[user_id] = client
+            await client.sign_in(
+                phone_number=session["phone"],
+                phone_code_hash=session["hash"],
+                phone_code=message.text.strip()
+            )
             del login_sessions[user_id]
-            await message.reply("✅ Logged in successfully!")
+            await message.reply_text("✅ Logged in successfully!")
         except SessionPasswordNeeded:
             session["step"] = "2fa"
-            await message.reply("🔐 Please send your 2FA password:")
+            await message.reply_text("🔐 2FA enabled. Enter your password:")
         except Exception as e:
-            await message.reply(f"❌ OTP Error: {e}")
+            await message.reply_text(f"❌ OTP Error: {e}")
 
-    elif session["step"] == "2fa":
+    elif step == "2fa":
         try:
-            await client.check_password(code)
-            await client.start()
-            user_clients[user_id] = client
+            await client.check_password(message.text.strip())
             del login_sessions[user_id]
-            await message.reply("✅ Logged in with 2FA successfully!")
+            await message.reply_text("✅ Logged in with 2FA!")
         except Exception as e:
-            await message.reply(f"❌ 2FA Error: {e}")
+            await message.reply_text(f"❌ 2FA Error: {e}")
 
 
 @bot.on_message(filters.command("setchat"))
-async def setchat(_, message: Message):
+async def set_chat(_, message: Message):
     try:
         _, source_id, target_id = message.text.split()
         chat_pairs[int(source_id)] = int(target_id)
-        await message.reply(f"🔁 Messages from `{source_id}` ➜ `{target_id}` will now be forwarded.")
+        await message.reply_text(f"✅ Forwarding set: {source_id} → {target_id}")
     except Exception as e:
-        await message.reply(f"❌ Error: {e}")
+        await message.reply_text(f"❌ Error: {e}")
 
 
-# ✅ Auto Forwarding Function
 @bot.on_message(filters.all & ~filters.private)
 async def forward_messages(_, message: Message):
     source_id = message.chat.id
@@ -124,28 +119,16 @@ async def forward_messages(_, message: Message):
                 print(f"❌ Forward error: {e}")
 
 
-async def main():
-    # ✅ Auto-load all existing user sessions
-    for fname in os.listdir("sessions"):
-        if fname.endswith(".session"):
-            user_id = fname.split(".")[0]
-            try:
-                client = Client(f"sessions/{user_id}", api_id=API_ID, api_hash=API_HASH)
-                await client.start()
-                user_clients[int(user_id)] = client
-                print(f"✅ Loaded session for {user_id}")
-            except Exception as e:
-                print(f"⚠️ Failed to load session {user_id}: {e}")
 
+async def main():
     await bot.start()
-    print("🤖 Bot running...")
+    print("🤖 Bot is running.")
     await asyncio.get_event_loop().create_future()
 
-
+# Start the bot
 if __name__ == "__main__":
     try:
         loop = asyncio.get_event_loop()
         loop.run_until_complete(main())
     except KeyboardInterrupt:
-        print("👋 Exiting.")
-                    
+        print("Bot stopped manually.")
