@@ -1,5 +1,5 @@
 from pyrogram import Client, filters
-from pyrogram.types import Message
+from pyrogram.types import Message, ChatMember
 
 API_ID = 25024171  # Replace with your API ID
 API_HASH = "7e709c0f5a2b8ed7d5f90a48219cffd3"
@@ -54,15 +54,33 @@ async def forward_messages(client, message: Message):
     source_id = message.chat.id
     if source_id in chat_pairs:
         target_id = chat_pairs[source_id]
+
         try:
+            # Check if the bot is an admin in the source chat
+            chat_member = await client.get_chat_member(source_id, "me")  # "me" is the bot's user ID
+
+            if chat_member.status not in [ChatMember.ADMINISTRATOR, ChatMember.CREATOR]:
+                # If the bot is not an admin, notify the user and return
+                await client.send_message(
+                    message.chat.id, 
+                    "❌ I am not an admin in the source chat. Please make me an admin to forward messages."
+                )
+                return
+
+            # Proceed with forwarding the message
             await client.copy_message(
                 chat_id=target_id,
                 from_chat_id=source_id,
                 message_id=message.id
             )
+
         except Exception as e:
             print(f"❌ Error copying message: {e}")
-
+            # Optionally, notify the user of an error
+            await client.send_message(
+                message.chat.id,
+                "❌ An error occurred while trying to forward the message. Please try again later."
+            )
 
 
 app.run()
