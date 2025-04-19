@@ -119,6 +119,66 @@ async def set_chat(_, message: Message):
     user_client.add_handler(MessageHandler(forward_message, filters.chat(source_id)))
     await message.reply(f"✅ Set to copy from `{source_id}` → `{target_id}`")
 
+user_handlers = {}
+
+@bot.on_message(filters.command("list"))
+async def list_active(_, message: Message):
+    user_id = message.from_user.id
+    links = chat_links.get(user_id, [])
+
+    if not links:
+        return await message.reply("📭 No active forwards found.")
+
+    text = "📋 **Active Forwards:**\n\n"
+    for i, (source, target) in enumerate(links, 1):
+        text += f"{i}. From `{source}` → `{target}`\n"
+    await message.reply(text)
+
+@bot.on_message(filters.command("stop"))
+async def stop_forward(_, message: Message):
+    user_id = message.from_user.id
+    args = message.text.split()
+
+    if len(args) != 2:
+        return await message.reply("❌ Usage: /stop <source_chat_id>")
+
+    try:
+        source_id = int(args[1])
+    except:
+        return await message.reply("❌ Invalid source chat ID.")
+
+    if user_id not in chat_links or not chat_links[user_id]:
+        return await message.reply("❌ You have no active forwards.")
+
+    # Remove links and handlers
+    remaining_links = []
+    removed = False
+    if user_id in user_handlers:
+        for (src, tgt), handler in user_handlers[user_id][:]:
+            if src == source_id:
+                try:
+                    user_clients[user_id].remove_handler(*handler)
+                    removed = True
+                    user_handlers[user_id].remove(((src, tgt), handler))
+                except:
+                    pass
+            else:
+                remaining_links.append((src, tgt))
+    chat_links[user_id] = remaining_links
+
+    if removed:
+        await message.reply(f"🛑 Stopped forwarding from `{source_id}`")
+    else:
+        await message.reply("⚠️ No active handler found for that source.")
+
+# Modify this part inside your setchat handler after adding new handler:
+    if user_id not in user_handlers:
+        user_handlers[user_id] = []
+
+    handler = MessageHandler(forward_message, filters.chat(source_id))
+    user_client.add_handler(handler)
+    user_handlers[user_id].append(((source_id, target_id), handler))
+
 async def main():
     await bot.start()
     print("🤖 Bot started.")
