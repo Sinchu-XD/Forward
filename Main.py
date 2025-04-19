@@ -30,7 +30,7 @@ async def login(_, message: Message):
         return await message.reply("❌ Use: /login <phone_number>")
     
     phone = args[1]
-    session_str = f"sessions/{user_id}_{phone}"
+    session_str = f"sessions/{user_id}"
     client = Client(session_str, api_id=API_ID, api_hash=API_HASH)
 
     if os.path.exists(session_str + ".session"):
