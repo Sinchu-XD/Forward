@@ -55,9 +55,14 @@ async def forward_messages(client, message: Message):
     if source_id in chat_pairs:
         target_id = chat_pairs[source_id]
         try:
-            await message.forward(target_id)
+            await client.copy_message(
+                chat_id=target_id,
+                from_chat_id=source_id,
+                message_id=message.id
+            )
         except Exception as e:
-            print(f"❌ Error forwarding: {e}")
+            print(f"❌ Error copying message: {e}")
+
 
 
 app.run()
