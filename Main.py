@@ -2,145 +2,138 @@ import os
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from pyrogram.handlers import MessageHandler
 from pyrogram.errors import SessionPasswordNeeded
 
 API_ID = 25024171
 API_HASH = "7e709c0f5a2b8ed7d5f90a48219cffd3"
-BOT_TOKEN = "7812831912:AAHh1Wiwhpkxpy4_Y_YkNDHkA1zsm3dQYx8"
+BOT_TOKEN = "7812831912:AAHh1Wiwhpkxpy4_Y_YkNDHkA1zsmfQYx8"
 
-# Ensure sessions folder exists
+bot = Client("forward_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+login_sessions = {}
+user_clients = {}      # user_id -> Client
+chat_links = {}        # user_id -> [(source_id, target_id)]
+
 os.makedirs("sessions", exist_ok=True)
-
-bot = Client("ghibli_forward_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-login_sessions = {}  # Temporary OTP/2FA data
-user_clients = {}    # Active logged-in user Clients
-chat_pairs = {}      # Source → Target chat mappings
-
 
 @bot.on_message(filters.command("start"))
 async def start(_, message: Message):
-    await message.reply_text("👋 Send /login <your_phone_number> to login with your Telegram account.")
-
+    await message.reply_text(
+        "**👋 Welcome!**\n\nSend `/login <phone>` to log in with your Telegram user.\nThen `/setchat <source_id> <target_id>` to copy messages.\n\n✅ Bot not needed in source chat."
+    )
 
 @bot.on_message(filters.command("login"))
-async def handle_login(_, message: Message):
+async def login(_, message: Message):
     user_id = message.from_user.id
-    args = message.text.split(maxsplit=1)
-
+    args = message.text.split()
     if len(args) != 2:
-        await message.reply_text("📱 Please use `/login <your_phone_number>`\n\nExample: `/login +919876543210`", quote=True)
-        return
+        return await message.reply("❌ Use: /login <phone_number>")
+    
+    phone = args[1]
+    session_str = f"sessions/{user_id}"
+    client = Client(session_str, api_id=API_ID, api_hash=API_HASH)
 
-    phone = args[1].strip()
-    session_name = f"sessions/{user_id}"
-
-    if os.path.exists(session_name + ".session"):
-        user_clients[user_id] = Client(session_name, api_id=API_ID, api_hash=API_HASH)
-        await user_clients[user_id].start()
-        await message.reply_text("✅ You're already logged in.")
-        return
-
+    if os.path.exists(session_str + ".session"):
+        await client.start()
+        user_clients[user_id] = client
+        chat_links[user_id] = []
+        return await message.reply("✅ Already logged in.")
+    
     try:
-        user_clients[user_id] = Client(session_name, api_id=API_ID, api_hash=API_HASH)
-        await user_clients[user_id].connect()
-        sent_code = await user_clients[user_id].send_code(phone)
-
+        await client.connect()
+        sent_code = await client.send_code(phone)
         login_sessions[user_id] = {
-            "client": user_clients[user_id],
+            "client": client,
             "phone": phone,
             "hash": sent_code.phone_code_hash,
             "step": "otp"
         }
-        await message.reply_text("📨 Enter the OTP you received:")
+        await message.reply("📨 Enter the OTP:")
     except Exception as e:
-        await message.reply_text(f"❌ Error: {e}")
-
+        await message.reply(f"❌ Error sending code: {e}")
 
 @bot.on_message(filters.text & ~filters.command(["start", "login", "setchat"]))
-async def login_flow(_, message: Message):
+async def handle_steps(_, message: Message):
     user_id = message.from_user.id
     session = login_sessions.get(user_id)
-
     if not session:
         return
 
-    step = session["step"]
     client = session["client"]
+    text = message.text.strip()
 
-    if step == "otp":
+    if session["step"] == "otp":
         try:
-            await client.sign_in(
-                phone_number=session["phone"],
-                phone_code_hash=session["hash"],
-                phone_code=message.text.strip()
-            )
+            await client.sign_in(session["phone"], session["hash"], text)
+            user_clients[user_id] = client
+            chat_links[user_id] = []
             del login_sessions[user_id]
-            await message.reply_text("✅ Logged in successfully!")
+            await message.reply("✅ Logged in!")
         except SessionPasswordNeeded:
             session["step"] = "2fa"
-            await message.reply_text("🔐 2FA enabled. Enter your password:")
+            await message.reply("🔐 Enter 2FA password:")
         except Exception as e:
-            await message.reply_text(f"❌ OTP Error: {e}")
-
-    elif step == "2fa":
+            await message.reply(f"❌ OTP error: {e}")
+    
+    elif session["step"] == "2fa":
         try:
-            await client.check_password(message.text.strip())
+            await client.check_password(text)
+            user_clients[user_id] = client
+            chat_links[user_id] = []
             del login_sessions[user_id]
-            await message.reply_text("✅ Logged in with 2FA!")
+            await message.reply("✅ Logged in with 2FA!")
         except Exception as e:
-            await message.reply_text(f"❌ 2FA Error: {e}")
-
-
-from pyrogram import handlers
+            await message.reply(f"❌ 2FA error: {e}")
 
 @bot.on_message(filters.command("setchat"))
 async def set_chat(_, message: Message):
     user_id = message.from_user.id
-    args = message.text.split()
-
-    if len(args) != 3:
-        return await message.reply_text("❌ Use: /setchat <source_chat_id> <target_chat_id>")
-
-    source_id = int(args[1])
-    target_id = int(args[2])
-
     if user_id not in user_clients:
-        return await message.reply_text("❌ Please login first using /login")
+        return await message.reply("❌ You're not logged in.")
 
+    args = message.text.split()
+    if len(args) != 3:
+        return await message.reply("❌ Usage: /setchat <source_chat_id> <target_chat_id>")
+    
+    try:
+        source_id = int(args[1])
+        target_id = int(args[2])
+    except:
+        return await message.reply("❌ Chat IDs must be numbers.")
+    
     user_client = user_clients[user_id]
+    chat_links[user_id].append((source_id, target_id))
 
-    async def on_source_message(_, msg: Message):
+    async def forward_message(client, msg: Message):
         try:
-            await bot.copy_message(
+            await client.copy_message(
                 chat_id=target_id,
                 from_chat_id=msg.chat.id,
                 message_id=msg.id
             )
-            print(f"✅ Copied from {msg.chat.id} to {target_id}")
+            print(f"✅ Copied {msg.id} from {source_id} → {target_id}")
         except Exception as e:
-            print(f"❌ Copy error: {e}")
+            print(f"❌ Copy failed: {e}")
 
-    # Create handler
-    handler = handlers.MessageHandler(on_source_message, filters.chat(source_id))
-
-    # Add to user's client
-    user_client.add_handler(handler)
-
-    await message.reply_text(f"✅ All messages from `{source_id}` will be copied to `{target_id}`.")
-
-
-
+    user_client.add_handler(MessageHandler(forward_message, filters.chat(source_id)))
+    await message.reply(f"✅ Set to copy from `{source_id}` → `{target_id}`")
 
 async def main():
     await bot.start()
-    print("🤖 Bot is running.")
+    print("🤖 Bot started.")
+
+    # Start user sessions
+    for user_id, client in user_clients.items():
+        await client.start()
+
+    # Keep bot alive
     await asyncio.get_event_loop().create_future()
 
-# Start the bot
 if __name__ == "__main__":
     try:
         loop = asyncio.get_event_loop()
         loop.run_until_complete(main())
     except KeyboardInterrupt:
-        print("Bot stopped manually.")
+        print("🛑 Stopped.")
+        
